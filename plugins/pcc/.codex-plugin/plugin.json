@@ -1,0 +1,19 @@
+{
+  "name": "pcc",
+  "version": "0.2.0",
+  "license": "MIT",
+  "description": "Plan and review in the current conversation; dispatch one independently authenticated Plus Codex CLI through an authenticated PCC server.",
+  "author": {
+    "name": "PCC contributors"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "PCC collaboration",
+    "shortDescription": "Independent Plus execution with durable usage receipts",
+    "longDescription": "A collaboration skill for your separately deployed OAuth-authenticated PCC controller. Configure the MCP connection and project grant before dispatch. Host-trusted execution is Full Access, not a sandbox.",
+    "developerName": "PCC contributors",
+    "category": "Developer Tools",
+    "capabilities": ["Interactive", "Write"],
+    "defaultPrompt": ["进行pcc协作模式：先检查已授权项目和连接状态。"]
+  }
+}

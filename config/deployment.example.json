@@ -1,0 +1,8 @@
+{
+  "deployment_enabled": false,
+  "port": 8876,
+  "issuer": "https://REQUIRES_APPROVED_OAUTH_ISSUER.invalid",
+  "jwks_url": "https://REQUIRES_APPROVED_OAUTH_ISSUER.invalid/.well-known/jwks.json",
+  "resource": "https://REQUIRES_APPROVED_PCC_HOST.invalid/mcp",
+  "client_ids": ["REQUIRES_REGISTERED_OAUTH_CLIENT"]
+}

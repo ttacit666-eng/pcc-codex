@@ -1,0 +1,17 @@
+{
+  "project": "replace-with-project-alias",
+  "subject": "replace-with-authorized-oauth-subject",
+  "execution_mode": "PCC_HOST_TRUSTED",
+  "host_trusted_ack": true,
+  "root": "REQUIRES_EXPLICIT_PROJECT_DIRECTORY",
+  "actions": ["read", "write", "run"],
+  "read_roots": ["input"],
+  "write_roots": ["results"],
+  "delete_roots": [],
+  "wheels": [],
+  "upload_targets": [],
+  "download_targets": [],
+  "external_idle_ack": false,
+  "timeout_seconds": 120,
+  "synthetic": false
+}
