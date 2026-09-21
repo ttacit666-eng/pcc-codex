@@ -70,7 +70,7 @@ The phrase alone checks readiness without dispatch. The controller creates task/
 
 Token totals are not quota percentages. Rate-limit deltas are before/after observations, not exact task billing. Missing data stays missing, and parallel activity/reset windows are flagged. Failed tasks retain their usage; sampling failures never trigger model retries.
 
-Dependency support is an approved offline wheel workflow, not unrestricted online package installation. Upload support is not a general SSH/HPC executor. Full Access must only be used for trusted, explicitly authorized tasks. Read [SECURITY.md](../SECURITY.md).
+Dependency support includes approved offline wheels and pinned DSH/npm package installations through saved local install IDs. Lifecycle scripts are disabled; web callers cannot supply arbitrary commands or package URLs. See [package installation](PACKAGE_INSTALL.md). Upload support is not a general SSH/HPC executor. Full Access must only be used for trusted, explicitly authorized tasks. Read [SECURITY.md](../SECURITY.md).
 
 ## Administration and outputs
 

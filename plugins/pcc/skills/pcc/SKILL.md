@@ -17,3 +17,5 @@ plan包含read_files、expected_outputs、publish[{artifact,destination}]、dele
 客户端写入确认必须保留，权限只来自服务端本地批准配置。原Pro/Plus登录与旧CWC不改动。不合并额度、不自动换号、不使用模型API Key。
 固定小结：结果 | 执行状态 | 独立审查状态；输入/其中缓存/输出/输入加输出；五小时前后观察增量及剩余、周剩余、采样/重置时间、缺失与并行限制。全部来自原生回执，缺失写未取得，不让模型估算或把前后差当精确扣费。
 网页无主动通知时，在当前可用工具流程查询状态；不得承诺后台稍后主动发送。新会话仍须具备插件/工具和授权。
+
+安装扩展：plan 可选 package_installs=[本机已授权安装ID]。先读 pcc_project.package_installs；包名、固定版本、profile、入口哈希由本机授权保存，网页不得覆写。broker 在 Plus 输出验收后只执行一次，默认禁用生命周期脚本与 pnpm hooks；Plus 不重复执行安装。检查 actions 中的 package_install/result，VERIFIED_INSTALLED 只证明包版本，不等于插件激活或重启验收。超时 RECOVERY_REQUIRED 禁止自动重派。

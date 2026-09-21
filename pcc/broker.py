@@ -50,7 +50,10 @@ def validate_grant(g,state):
         if not 1<=target.get('max_bytes',0)<=10000000:raise ValueError('download bounds required')
         if target.get('sha256') is not None and not re.fullmatch('[0-9a-f]{64}',target['sha256']):raise ValueError('invalid download hash')
     if len({x['id'] for x in g['download_targets']})!=len(g['download_targets']):raise ValueError('duplicate download target')
-    g['root']=str(root);return g
+    g['root']=str(root)
+    from .package_install import validate_targets
+    validate_targets(g)
+    return g
 
 def check_wheel(path):
     with zipfile.ZipFile(path) as archive:
@@ -62,11 +65,12 @@ def check_wheel(path):
                 raise ValueError('wheel startup hook or unsafe path rejected')
 
 def validate_plan(g,p):
-    if not isinstance(p,dict) or set(p)-{'read_files','publish','delete','dependencies','uploads','downloads','expected_outputs'}:raise ValueError('invalid plan')
+    if not isinstance(p,dict) or set(p)-{'read_files','publish','delete','dependencies','uploads','downloads','expected_outputs','package_installs'}:raise ValueError('invalid plan')
     p=json.loads(json.dumps(p))
     for key in ('read_files','publish','delete','dependencies','uploads','expected_outputs'):p.setdefault(key,[])
     # Preserve legacy task fingerprints when the optional extension is unused.
     if p.get('downloads')==[]:p.pop('downloads')
+    if p.get('package_installs')==[]:p.pop('package_installs')
     if any(not isinstance(v,list) or len(v)>50 for v in p.values()):raise ValueError('plan bounds')
     root=Path(g['root'])
     def require(action):
@@ -100,6 +104,8 @@ def validate_plan(g,p):
         key=item['destination'].casefold()
         if key in input_names:raise ValueError('duplicate frozen input destination')
         input_names.add(key)
+    from .package_install import validate_requests
+    validate_requests(g,p)
     return p
 
 class Broker:
@@ -172,6 +178,8 @@ class Broker:
         if (digest(p) if p.exists() else None)!=self.before[rel]:raise RuntimeError('external write conflict; no overwrite')
         return p
     def apply(self,plan):
+        from .package_install import install
+        install(self,plan)
         for item in plan['publish']:
             self.checkpoint();src=inside(self.run/'artifacts',item['artifact']);dest=self.check_unchanged(item['destination'])
             if dest.exists():

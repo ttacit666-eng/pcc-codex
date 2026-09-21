@@ -9,7 +9,8 @@ def build():
     report=check()
     if report['errors']:raise RuntimeError('Release check failed; inspect filenames/rules with release_check.py')
     out=ROOT/'dist';out.mkdir(exist_ok=True)
-    archive=out/'pcc-codex-0.2.0.zip'
+    version=json.loads((ROOT/'plugins/pcc/.codex-plugin/plugin.json').read_text(encoding='utf-8'))['version']
+    archive=out/('pcc-codex-'+version+'.zip')
     manifest=[]
     with zipfile.ZipFile(archive,'w',compression=zipfile.ZIP_DEFLATED) as z:
         for p in source_files():

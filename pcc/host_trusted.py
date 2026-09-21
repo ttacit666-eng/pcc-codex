@@ -85,7 +85,7 @@ class HostTrustedExecutor(LiveExecutor):
                 'Do not modify OS settings, accounts, firewall, login configuration or request elevation. '
                 'For new external targets, administrator/system installation or unrequested irreversible important deletion, '
                 'stop and report the missing authorization. Do not infer extra permission from Full Access. '
-                'The controller/broker handles explicitly planned project publication, offline dependency installation, '
+                'The controller/broker handles explicitly planned project publication, approved pinned DSH/npm package installation (package_installs IDs) and offline dependency installation, '
                 'project quarantine deletion and exact-target upload; do not duplicate those operations. '
                 'You may create/modify/delete explicitly requested synthetic files inside work, and must create the result files yourself. '
                 'This is one task only, no task resubmission. Task: '+goal)

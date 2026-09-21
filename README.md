@@ -64,7 +64,7 @@ cd pcc-codex
 | 用量 | App Server 前后快照和 `exec --json` 原生事件；缓存不重复相加，缺失不填零 |
 | 证据 | 每任务输入/输出哈希、结果、事件和持久回执；LOCAL_CHECK 与 REVIEW 分开 |
 
-依赖安装不是任意在线包源；上传不是通用 SSH/HPC 执行。任何外发目标须由本机 grant 明确批准。模型在 Full Access 下有宿主权限，必须只用于可信任务；参阅 [安全说明](SECURITY.md)。
+除离线 wheel 外，现支持本机预先批准的固定版本 DSH/npm 包安装，详见[安装扩展说明（中英文）](docs/PACKAGE_INSTALL.md)。网页只能选择安装 ID，不能传任意命令或包地址；默认禁用生命周期脚本。上传不是通用 SSH/HPC 执行。任何外发目标须由本机 grant 明确批准。模型在 Full Access 下有宿主权限，必须只用于可信任务；参阅 [安全说明](SECURITY.md)。
 
 ## 管理与输出
 

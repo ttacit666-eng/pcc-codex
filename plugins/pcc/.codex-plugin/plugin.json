@@ -1,6 +1,6 @@
 {
   "name": "pcc",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "license": "MIT",
   "description": "Plan and review in the current conversation; dispatch one independently authenticated Plus Codex CLI through an authenticated PCC server.",
   "author": {

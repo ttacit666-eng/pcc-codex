@@ -152,7 +152,9 @@ def execute(c,task,executor=None):
         flags.append(type(ex).__name__)
         # A terminal guest response has no host Windows PID. Preserve failure rather
         # than misclassifying missing artifacts as a pre-execution block.
+        from .package_install import InstallUncertain
         state='FAILED' if cap.get('status') in ('completed','failed') else ('RECOVERY_REQUIRED' if observed_pid else 'BLOCKED')
+        if isinstance(ex,InstallUncertain):state='RECOVERY_REQUIRED'
         save(run/'failure.json',{'error_type':type(ex).__name__,'stage':'post_execution' if cap else 'pre_execution_or_capture','message':str(ex)[:300]})
         # Any uncertainty after spawn remains occupied, never automatically repeated.
     finally:

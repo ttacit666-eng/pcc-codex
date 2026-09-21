@@ -48,7 +48,7 @@ class Controller:
         with self.db() as c:rows=c.execute('SELECT project,version,body FROM grants WHERE subject=? AND enabled=1',(subject,)).fetchall()
         return {'service':'PCC independent executor','marker':'pcc-implementation-20260916','version':'0.1.0','projects':[{'id':r['project'],'version':r['version'],'actions':json.loads(r['body'])['actions']} for r in rows],
                 'execution_modes':['PCC_STRICT','PCC_HOST_TRUSTED'],'mode_selection':'saved local project grant only; HOST_TRUSTED is Full Access, not strict isolation',
-                'single_plus_executor':True,'external_concurrency':'not excluded','review':'independent conversation; LOCAL_CHECK is not REVIEW'}
+                'package_installation':{'kinds':['npm','dsh'],'request_field':'package_installs','selectors':'saved grant IDs only','scripts':'disabled','actor':'broker','activation':'not automatically verified'},'single_plus_executor':True,'external_concurrency':'not excluded','review':'independent conversation; LOCAL_CHECK is not REVIEW'}
     def submit(self,subject,project,version,goal,plan,request_label=''):
         if (self.root/'disabled.flag').exists():raise PermissionError('PCC dispatch paused by local owner')
         g=self.authorized(subject,project,version)
