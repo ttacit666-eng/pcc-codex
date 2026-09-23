@@ -16,6 +16,24 @@ MANIFESTS = ('package.json', 'package-lock.json', 'pnpm-lock.yaml', 'pnpm-worksp
 class InstallUncertain(RuntimeError):
     """A child may remain alive; retain the account lock and never auto-retry."""
 
+def verify_installed(directory, packages):
+    """Read only approved package metadata; pnpm store hardlinks are legitimate."""
+    directory=plain(directory)
+    manifest=load(inside(directory,'package.json'))
+    for p in packages:
+        if not PACKAGE.fullmatch(p['name']):raise ValueError('invalid package name')
+        if manifest.get('dependencies',{}).get(p['name'])!=p['version']:
+            raise ValueError('saved package version mismatch')
+        resolved=(directory/'node_modules'/p['name']/'package.json').resolve(strict=True)
+        if directory.resolve() not in resolved.parents:raise ValueError('installed metadata outside profile')
+        plain(resolved.parent)
+        # Do not weaken plain() for writes or general file access.
+        with resolved.open('r',encoding='utf-8') as stream:
+            if os.fstat(stream.fileno()).st_size>2000000:raise ValueError('metadata too large')
+            installed=json.load(stream)
+        if installed.get('name')!=p['name'] or installed.get('version')!=p['version']:
+            raise ValueError('installed package identity mismatch')
+
 def validate_targets(g):
     targets = g.get('package_installs', [])
     if not isinstance(targets, list) or len(targets)>20: raise ValueError('package install bounds')
@@ -87,7 +105,7 @@ def invocation(g,t,folder):
         (shim/'pnpm.cmd').write_text('@echo off\r\n"'+node+'" "'+manager+'" %*\r\n',encoding='utf-8')
         env['PATH']=str(shim)+os.pathsep+str(Path(node).parent)+os.pathsep+env.get('PATH','')
         env['DSH_HOME']=g['root']
-        args=[node,rt['dsh']['path'],'plugin','--profile',t['profile'],'add','--save-exact','--ignore-scripts','--ignore-pnpmfile','--registry='+REGISTRY,*specs]
+        args=[node,rt['dsh']['path'],'plugin','--profile',t['profile'],'add','--save-exact','--ignore-scripts','--ignore-pnpmfile','--fetch-timeout=300000','--fetch-retries=0','--network-concurrency=3','--registry='+REGISTRY,*specs]
     return args,env
 
 def install(broker,plan):
@@ -114,7 +132,8 @@ def install(broker,plan):
         save(folder/'invocation.json',{'argv':args,'cwd':str(directory),'shell':False,'environment_values_recorded':False})
         proc=None
         try:
-            proc=subprocess.Popen(args,cwd=directory,env=env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,shell=False)
+            with (folder/'installer.log').open('wb') as log:
+                proc=subprocess.Popen(args,cwd=directory,env=env,stdin=subprocess.DEVNULL,stdout=log,stderr=subprocess.STDOUT,shell=False)
             save(folder/'process.json',{'pid':proc.pid,'status':'RUNNING'})
             deadline=time.monotonic()+t.get('timeout_seconds',300)
             while proc.poll() is None:
@@ -123,17 +142,7 @@ def install(broker,plan):
                 time.sleep(.1)
             if proc.returncode!=0:raise RuntimeError('package manager exit code '+str(proc.returncode))
             broker.checkpoint()
-            manifest=load(inside(directory,'package.json'))
-            for p in t['packages']:
-                if manifest.get('dependencies',{}).get(p['name'])!=p['version']:
-                    raise ValueError('saved package version mismatch')
-                # pnpm uses links; resolve only this approved package metadata, never arbitrary files.
-                metadata=directory/'node_modules'/p['name']/'package.json'
-                resolved=metadata.resolve(strict=True)
-                if directory.resolve() not in resolved.parents:raise ValueError('installed metadata outside profile')
-                installed=load(resolved)
-                if installed.get('name')!=p['name'] or installed.get('version')!=p['version']:
-                    raise ValueError('installed package identity mismatch')
+            verify_installed(directory,t['packages'])
             after={name:digest(inside(directory,name)) if (directory/name).exists() else None for name in MANIFESTS}
             result={'id':ident,'actor':'broker','status':'VERIFIED_INSTALLED','exit_code':proc.returncode,'packages':t['packages'],'before':before,'after':after,'activation':'NOT_VERIFIED','lifecycle_scripts':False}
             save(folder/'result.json',result);broker.record('package_install',result)
