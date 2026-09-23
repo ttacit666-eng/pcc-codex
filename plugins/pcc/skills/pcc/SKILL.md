@@ -16,6 +16,7 @@ plan包含read_files、expected_outputs、publish[{artifact,destination}]、dele
 任务结束后pcc_result读取用量和清单，pcc_artifact分页读取必要冻结结果。当前对话独立审查并报告REVIEW范围；LOCAL_CHECK不是REVIEW。未知进程占用不重派，不由Pro代跑。取消调用pcc_cancel，不能声称副作用回滚。
 客户端写入确认必须保留，权限只来自服务端本地批准配置。原Pro/Plus登录与旧CWC不改动。不合并额度、不自动换号、不使用模型API Key。
 固定小结：结果 | 执行状态 | 独立审查状态；输入/其中缓存/输出/输入加输出；五小时前后观察增量及剩余、周剩余、采样/重置时间、缺失与并行限制。全部来自原生回执，缺失写未取得，不让模型估算或把前后差当精确扣费。
+PCC_HOST_TRUSTED 的独立 Plus 子进程默认请求 `gpt-6-sol`／`medium`；从回执分别说明请求值、生效配置和原生事件是否实际给出服务端选模。缓存输入已经包含在输入中，不再加一次。常规 PCC 回执的 Pro 网页规划与审查 token 若无官方会话级记录，明确写“未取得”，不得填零；单独 Pro CLI 任务的执行 token 必须使用其独立原生事件回执，不冒充整个 PCC 工作流的 Pro 用量。
 网页无主动通知时，在当前可用工具流程查询状态；不得承诺后台稍后主动发送。新会话仍须具备插件/工具和授权。
 
 安装扩展：plan 可选 package_installs=[本机已授权安装ID]。先读 pcc_project.package_installs；包名、固定版本、profile、入口哈希由本机授权保存，网页不得覆写。broker 在 Plus 输出验收后只执行一次，默认禁用生命周期脚本与 pnpm hooks；Plus 不重复执行安装。检查 actions 中的 package_install/result，VERIFIED_INSTALLED 只证明包版本，不等于插件激活或重启验收。超时 RECOVERY_REQUIRED 禁止自动重派。

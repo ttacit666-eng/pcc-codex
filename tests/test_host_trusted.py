@@ -24,6 +24,8 @@ def test_existing_grant_remains_strict(tmp_path):
 def test_full_access_argv_does_not_mix_legacy_or_skip_rules(tmp_path):
     e=HostTrustedExecutor();argv=e.arguments(tmp_path,tmp_path/'control','python')
     text=' '.join(argv)
+    assert 'model="gpt-6-sol"' in argv
+    assert 'model_reasoning_effort="medium"' in argv
     assert 'default_permissions=":danger-full-access"' in argv
     assert 'approval_policy="never"' in argv
     for forbidden in ('sandbox_mode=', '--sandbox', '--dangerously-bypass', '--ignore-rules', 'permissions.pcc-task'):
@@ -44,6 +46,9 @@ def test_saved_mode_selects_executor_without_strict_gate(tmp_path):
         out=c.execute(r['id'])
     assert out['status']=='LOCAL_CHECK' and out['execution_mode']=='PCC_HOST_TRUSTED'
     assert fake.calls==1 and gate.call_count==1 and strict.call_count==0
+    model=c.result('owner',r['id'])['usage']['model_selection']
+    assert model['requested_model']=='gpt-6-sol'
+    assert model['preflight_passed'] is False  # An injected empty preflight is not verification.
     with pytest.raises(RuntimeError):c.execute(r['id'])
 
 
@@ -60,7 +65,55 @@ def test_preflight_rejects_mixed_or_managed_settings(tmp_path):
         def __init__(self,*a):pass
         def close(self):pass
         def call(self,*a,**kw):
-            return {'result':{'config':{'default_permissions':':danger-full-access','sandbox_mode':'read-only',
+            return {'result':{'config':{'model':'gpt-6-sol','model_reasoning_effort':'medium',
+                    'default_permissions':':danger-full-access','sandbox_mode':'read-only',
                     'approval_policy':'never','forced_login_method':'chatgpt','cli_auth_credentials_store':'file'}}}
     with mock.patch('pcc.host_trusted.SandboxRPC',RPC):
         with pytest.raises(PermissionError):HostTrustedExecutor().preflight(c,row,tmp_path,tmp_path,'python')
+    assert json.loads((tmp_path/'host-trusted-preflight.json').read_text())['effective_config']['sandbox_mode']=='read-only'
+
+
+@pytest.mark.parametrize('wrong_key,wrong_value',[
+    ('model','gpt-5.6-sol'),('model_reasoning_effort','high')])
+def test_preflight_rejects_model_mismatch_before_child(tmp_path,wrong_key,wrong_value):
+    c=Controller(tmp_path/'control');g=grant(tmp_path/'project')
+    g.update(execution_mode='PCC_HOST_TRUSTED',host_trusted_ack=True)
+    v=c.grant(g)['version'];row={'subject':'owner','project':'synthetic','version':v}
+    class RPC:
+        calls=[]
+        def __init__(self,*a):pass
+        def close(self):pass
+        def call(self,method,*a):
+            self.calls.append(method)
+            cfg={'model':'gpt-6-sol','model_reasoning_effort':'medium',
+                 'default_permissions':':danger-full-access','sandbox_mode':None,
+                 'approval_policy':'never','forced_login_method':'chatgpt',
+                 'cli_auth_credentials_store':'file'}
+            cfg[wrong_key]=wrong_value
+            return {'result':{'config':cfg}}
+    with mock.patch('pcc.host_trusted.SandboxRPC',RPC):
+        with pytest.raises(PermissionError,match='model or permission'):
+            HostTrustedExecutor().preflight(c,row,tmp_path,tmp_path,'python')
+    assert RPC.calls==['config/read']
+
+
+def test_preflight_records_effective_model_without_model_request(tmp_path):
+    c=Controller(tmp_path/'control');g=grant(tmp_path/'project')
+    g.update(execution_mode='PCC_HOST_TRUSTED',host_trusted_ack=True)
+    v=c.grant(g)['version'];row={'subject':'owner','project':'synthetic','version':v}
+    class RPC:
+        def __init__(self,*a):pass
+        def close(self):pass
+        def call(self,method,*a):
+            if method=='config/read':
+                return {'result':{'config':{'model':'gpt-6-sol','model_reasoning_effort':'medium',
+                        'default_permissions':':danger-full-access','sandbox_mode':None,
+                        'approval_policy':'never','forced_login_method':'chatgpt',
+                        'cli_auth_credentials_store':'file'}}}
+            assert method=='command/exec'
+            return {'result':{'exitCode':0,'stdout':'{"mode":"PCC_HOST_TRUSTED","pid":123}'}}
+    with mock.patch('pcc.host_trusted.SandboxRPC',RPC):
+        evidence=HostTrustedExecutor().preflight(c,row,tmp_path,tmp_path,'python')
+    assert evidence['effective_config']['model']=='gpt-6-sol'
+    assert evidence['effective_config']['model_reasoning_effort']=='medium'
+    assert evidence['model_requests']==0

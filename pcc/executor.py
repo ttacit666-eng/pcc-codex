@@ -109,10 +109,12 @@ class LiveExecutor:
         status='completed' if code==0 and any(x['type']=='turn.completed' for x in events) and not any(x['type']=='turn.failed' for x in events) else 'failed'
         return {'status':status,'events':events,'flags':flags,'pid':proc.pid,'exit_code':code}
 
-def receipt(c,r,run,before,after,events,status,version,flags,cap):
+def receipt(c,r,run,before,after,events,status,version,flags,cap,model_info=None):
     meta={'task_id':r['id'],'iteration':1,'run_id':r['run_id'],'task_status':status,'source_kind':cap.get('source_kind','live'),
           'cli_version':version,'started_at':r['created'],'finished_at':now(),'process_id':cap.get('pid'),
           'exit_code':cap.get('exit_code'),'original_owner':'current ChatGPT conversation','grant_version':r['version']}
+    if model_info is not None:
+        meta['model_selection']=model_info
     out=usage.build_receipt(meta,before,after,events,capture_flags=flags)
     save(run/'usage.json',out);(run/'receipt.md').write_text(usage.markdown(out),encoding='utf-8')
     # SQLite journal serializes index rebuild; model execution is already over.
@@ -150,7 +152,7 @@ def execute(c,task,executor=None):
     # Job data separate from controller-owned authority/receipts.
     job=c.root.parent/'jobs'/r['run_id']
     for sub in ('input','work','result'):(job/sub).mkdir(parents=True,exist_ok=False)
-    before={};after={};events=[];flags=[];cap={};state='BLOCKED';artifacts=[];version='unavailable';broker=None
+    before={};after={};events=[];flags=[];cap={};state='BLOCKED';artifacts=[];version='unavailable';broker=None;preflight_evidence=None
     save(run/'binding.json',{k:r[k] for k in ('id','run_id','subject','project','version','created')})
     try:
         c.checkpoint(r);g=c.authorized(r['subject'],r['project'],r['version']);body=json.loads(r['body']);plan=validate_plan(g,body['plan'])
@@ -159,7 +161,7 @@ def execute(c,task,executor=None):
             e=HostTrustedExecutor()
         broker=Broker(c,r,g,run);inputs=broker.freeze_inputs(job,plan);python=broker.install(plan) or sys.executable
         version=e.version()
-        if hasattr(e,'preflight'):e.preflight(c,r,job,run,python)
+        if hasattr(e,'preflight'):preflight_evidence=e.preflight(c,r,job,run,python)
         c.update(task,'SAMPLING');before=e.sample(job/'work');save(run/'samples-before.json',before)
         plus=before.get('plus_executor',{}).get('account') or {};pro=before.get('pro_controller',{}).get('account') or {}
         if plus.get('type')!='chatgpt' or plus.get('planType')!='plus' or not plus.get('identity_sha256') or not pro.get('identity_sha256') or plus['identity_sha256']==pro['identity_sha256']:
@@ -209,8 +211,31 @@ def execute(c,task,executor=None):
         try:after=e.sample(job/'work')
         except Exception:flags.append('post_sample_unavailable')
         save(run/'samples-after.json',after)
+        model_info=None
+        if getattr(e,'model',None) is not None:
+            evidence=preflight_evidence
+            if evidence is None and (run/'host-trusted-preflight.json').exists():
+                try:evidence=load(run/'host-trusted-preflight.json')
+                except (OSError,ValueError,TypeError):flags.append('model_preflight_evidence_unavailable')
+            effective=evidence.get('effective_config') if isinstance(evidence,dict) else None
+            if not isinstance(effective,dict):
+                effective={}
+                flags.append('model_preflight_evidence_unavailable')
+            requested_effort=getattr(e,'reasoning_effort',None)
+            passed=(isinstance(preflight_evidence,dict)
+                    and effective.get('model')==e.model
+                    and effective.get('model_reasoning_effort')==requested_effort
+                    and evidence.get('native_exit_code')==0
+                    and isinstance(evidence.get('native_process'),dict)
+                    and evidence['native_process'].get('mode')==getattr(e,'execution_mode',None))
+            model_info={'requested_model':e.model,'requested_reasoning_effort':requested_effort,
+                        'effective_model':effective.get('model'),
+                        'effective_reasoning_effort':effective.get('model_reasoning_effort'),
+                        'preflight_passed':passed,
+                        'evidence_file':'host-trusted-preflight.json' if (run/'host-trusted-preflight.json').exists() else None,
+                        'server_selected_model':'not_reported_by_filtered_usage_events'}
         save(run/'result.json',{'task_id':task,'run_id':r['run_id'],'status':state,'execution_mode':getattr(e,'execution_mode','injected_test_executor'),'local_check':state=='LOCAL_CHECK',
                               'artifacts':artifacts,'actions':broker.actions if broker else [],'flags':flags,'independent_review':'REVIEW_REQUIRED'})
-        receipt(c,r,run,before,after,events,'completed' if state=='LOCAL_CHECK' else state.lower(),version,flags,cap)
+        receipt(c,r,run,before,after,events,'completed' if state=='LOCAL_CHECK' else state.lower(),version,flags,cap,model_info)
         c.update(task,state,cap.get('pid'))
     return load(run/'result.json')
