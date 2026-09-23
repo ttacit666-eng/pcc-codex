@@ -429,6 +429,12 @@ def markdown(r):
            "|Pro 控制器|未知|未知|未知|未知|","|CWC 审查|未知|未知|未知|未知|","",
            "|角色/窗口|前已用%|后已用%|观察变化(百分点)|后剩余%|重置前/后 UTC|",
            "|---|---:|---:|---:|---:|---|"]
+    model=r.get("model_selection")
+    if isinstance(model,dict):
+        lines[4:4]=["模型请求："+fmt(model.get("requested_model"))+" / "+fmt(model.get("requested_reasoning_effort"))+"；CLI 生效配置："+
+                    fmt(model.get("effective_model"))+" / "+fmt(model.get("effective_reasoning_effort"))+
+                    "；预检："+("通过" if model.get("preflight_passed") else "未通过或未取得")+
+                    "。服务端最终模型若无原生事件字段则未验证。"]
     for role in ROLES:
         for key in ("five_hour","weekly"):
             q=r["roles"][role][key]

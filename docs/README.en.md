@@ -9,12 +9,13 @@ PCC lets the current ChatGPT conversation plan and review a task while a local, 
 ## Status and security boundary
 
 - Windows 11 and Python 3.12 were used for validation. Python 3.11+ is the intended runtime.
-- The reference CLI was version 0.153.4, using `default_permissions=":danger-full-access"`. Other versions must pass the native help/configuration checks before execution.
+- The model-selection acceptance used Codex CLI `0.155.0-alpha.9.2`. Other versions must pass native help and `config/read` checks before execution.
 - `PCC_HOST_TRUSTED` means Windows host execution with Full Access. **It does not provide strict filesystem or network isolation.** Project grants and broker validation are application controls, not an operating-system sandbox.
+- This mode requests `gpt-6-sol` with `medium` reasoning for the Plus child only and checks the effective native configuration before dispatch. It does not change the original Pro or Plus CLI defaults; unavailable models block before execution.
 - The legacy strict mode retains its fail-closed checks. The undeployed virtual-machine adapter is not advertised as operational.
 - Installation starts with dispatch paused and no project grants.
-- The reference deployment demonstrated a local synthetic Plus run, OAuth connection, discovery of seven MCP tools, and a real read-only ChatGPT capability call. A complete web dispatch/result/usage/independent-review loop is **not yet verified**.
-- This portable snapshot passed **131 non-model tests**, with **one skipped** due to unavailable Windows symbolic-link privileges. Junction tests ran separately. No Plus model request was made to validate this release.
+- The reference deployment completed one synthetic web dispatch, independent Plus execution, result and usage retrieval, and conversation review. Each new deployment still requires its own acceptance check.
+- This release candidate passed **201 non-model tests**, with **one skipped** due to unavailable Windows symbolic-link privileges. The reference comparison used one Pro CLI task and one Plus CLI task; the portable test suite made no model request.
 
 ## Install without starting a model task
 
@@ -69,6 +70,8 @@ The phrase alone checks readiness without dispatch. The controller creates task/
 | Review | LOCAL_CHECK remains separate from independent conversation REVIEW |
 
 Token totals are not quota percentages. Rate-limit deltas are before/after observations, not exact task billing. Missing data stays missing, and parallel activity/reset windows are flagged. Failed tasks retain their usage; sampling failures never trigger model retries.
+
+For a one-shot **execution-side** same-model comparison, prepare identical synthetic input and task text in a fresh `synthetic/<run>/` directory and inspect `tools/pro_cli_comparison.py --help`. Pro CLI and PCC Plus receipts remain separate. Pro web planning/review tokens are unavailable without official session-level data, so two CLI totals do not establish end-to-end collaboration savings.
 
 Dependency support includes approved offline wheels and pinned DSH/npm package installations through saved local install IDs. Lifecycle scripts are disabled; web callers cannot supply arbitrary commands or package URLs. See [package installation](PACKAGE_INSTALL.md). Upload support is not a general SSH/HPC executor. Full Access must only be used for trusted, explicitly authorized tasks. Read [SECURITY.md](../SECURITY.md).
 

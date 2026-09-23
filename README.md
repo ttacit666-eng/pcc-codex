@@ -8,9 +8,10 @@
 
 ## 状态与边界
 
-- 参考 Windows 部署已验证 OAuth 登录、7 个 MCP 工具发现，以及 ChatGPT 对话中的真实只读能力调用。可分享版本另做非模型回归，见 [验证记录](docs/VALIDATION.md)。
-- 当前支持 Windows 11、Python 3.11+（验收使用 3.12）与官方 Codex CLI。权限配置使用 `default_permissions=":danger-full-access"`，参考原生版本为 0.153.4。其他 CLI 版本必须先核对帮助和 `config/read`，配置不匹配会阻止执行。
+- 参考 Windows 部署已完成一次合成数据的网页派单、独立 Plus 执行、结果与用量读取及负责人审查。该一次验收不代表其他部署自动可用；可分享源码仍需各自部署和验收。
+- 当前支持 Windows 11、Python 3.11+（验收使用 3.12）与官方 Codex CLI。本轮模型/档位验收使用 `0.155.0-alpha.9.2`；其他 CLI 版本必须先核对帮助和 `config/read`，配置不匹配会阻止执行。
 - `PCC_HOST_TRUSTED` 是本机 Full Access，**没有严格文件或网络隔离**。项目 grant、提示词和 broker 路径检查不是操作系统沙箱。
+- 此模式的独立 Plus 子进程默认请求 `gpt-6-sol`／`medium`，由原生 `config/read` 核对后才派发；不更改原 Pro 或 Plus CLI 的全局默认模型。用户的账号若不支持该模型，任务会在模型启动前阻止。
 - `PCC_STRICT` 保留失败关闭的门禁；未部署的虚拟机适配不作为可用功能宣传。
 - 默认没有项目授权；安装保持派单暂停。完整网页执行、用量回传、独立 REVIEW 必须由部署者自己验收。
 
@@ -80,6 +81,8 @@ cd pcc-codex
 `resume` 必须在配置、项目批准和验收准备完成后由本机负责人执行。`serve` 手动监听 `127.0.0.1:8876`，不会注册开机服务。已有服务锁不自动抢占。
 
 输出保存在 `state/runs/<run_id>/`：`result.json`、`usage.json`、`receipt.md`、冻结 `artifacts` 和执行证据；`state/usage-index.json` 为持久索引。输入/输出可能含业务正文，**整个 state/jobs/evidence 不得随仓库分享**。
+
+如需同模型的**执行侧**单次对照，可在全新的 `synthetic/<运行目录>/` 下准备相同合成输入与任务正文，使用 `tools/pro_cli_comparison.py --help` 查看一次性 Pro CLI 采集入口。其回执与 PCC Plus 回执分开保存；Pro 网页规划/审查 token 无官方会话级记录时为“未取得”，因此不能据两次 CLI token 断言完整协作流程的节省率。
 
 撤销及恢复步骤见 [部署指南](docs/DEPLOYMENT.md#撤销与卸载)。GitHub 分享的是源码，不会把作者的 Plus 账号、Auth0 租户或电脑执行权分享给下载者。
 

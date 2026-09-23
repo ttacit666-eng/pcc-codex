@@ -8,11 +8,15 @@ from .sandbox_rpc import SandboxRPC
 
 class HostTrustedExecutor(LiveExecutor):
     execution_mode='PCC_HOST_TRUSTED'
+    model='gpt-6-sol'
+    reasoning_effort='medium'
 
     def arguments(self,job,control,python):
         # Use only the supported built-in permission profile. No legacy sandbox_mode
         # and no --dangerously-bypass-* flags; managed restrictions still apply.
         return [str(usage.CLI),'--strict-config',
+                '-c','model='+json.dumps(self.model),
+                '-c','model_reasoning_effort='+json.dumps(self.reasoning_effort),
                 '-c','default_permissions=":danger-full-access"',
                 '-c','approval_policy="never"',
                 '-c','forced_login_method="chatgpt"',
@@ -22,7 +26,8 @@ class HostTrustedExecutor(LiveExecutor):
 
     def permission_metadata(self):
         return {'execution_mode':self.execution_mode,'permission_scope':'HOST TRUSTED: Full Access; no strict sandbox isolation',
-                'approval_policy':'never','authorization_scope':'saved project grant plus specific task; not OS enforcement'}
+                'approval_policy':'never','authorization_scope':'saved project grant plus specific task; not OS enforcement',
+                'requested_model':self.model,'requested_reasoning_effort':self.reasoning_effort}
 
     def run(self,c,r,job,run,goal,plan,python,grant):
         from .config_guard import restore_owned_trust
@@ -51,15 +56,17 @@ class HostTrustedExecutor(LiveExecutor):
             reply=rpc.call('config/read',{'includeLayers':False,'cwd':str(job/'work')})
             if 'error' in reply:raise RuntimeError('effective configuration rejected')
             cfg=reply.get('result',{}).get('config',{})
-            effective={k:cfg.get(k) for k in ('default_permissions','sandbox_mode','approval_policy','forced_login_method','cli_auth_credentials_store')}
+            effective={k:cfg.get(k) for k in ('model','model_reasoning_effort','default_permissions','sandbox_mode','approval_policy','forced_login_method','cli_auth_credentials_store')}
             evidence={'execution_mode':self.execution_mode,'effective_config':effective,
+                      'requested_model':self.model,'requested_reasoning_effort':self.reasoning_effort,
                       'strict_isolation':'NOT_APPLICABLE_BY_EXPLICIT_USER_CHANGE',
                       'old_strict_gate':'NOT_CALLED','model_requests':0}
             save(run/'host-trusted-preflight.json',evidence)
-            if (effective['default_permissions']!=':danger-full-access' or effective['sandbox_mode'] is not None
+            if (effective['model']!=self.model or effective['model_reasoning_effort']!=self.reasoning_effort
+                or effective['default_permissions']!=':danger-full-access' or effective['sandbox_mode'] is not None
                 or effective['approval_policy']!='never' or effective['forced_login_method']!='chatgpt'
                 or effective['cli_auth_credentials_store']!='file'):
-                raise PermissionError('Full Access effective configuration mismatch; no policy bypass')
+                raise PermissionError('PCC model or permission effective configuration mismatch; no fallback')
             # Real non-model startup check only, not the old read/network isolation gate.
             result=rpc.call('command/exec',{'command':[str(python),'-c',
                 'import json,os;print(json.dumps({"mode":"PCC_HOST_TRUSTED","pid":os.getpid()}))'],
