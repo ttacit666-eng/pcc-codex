@@ -46,8 +46,16 @@ def test_post_sample_failure_never_reexecutes(tmp_path):
     assert c.result('owner',r['id'])['usage']['roles']['plus_executor']['five_hour']['remaining_after_percent'] is None
 
 def test_sample_trust_is_process_only(tmp_path):
-    # Native successful read-only probe separately proves original config hash unchanged.
-    with mock.patch.object(usage.subprocess,'Popen',side_effect=OSError('test')) as spawn:
-        usage.sample('plus_executor',{},tmp_path)
+    # The argv contract must not depend on a developer machine's real Codex install.
+    # Popen stays mocked: this fixture is only an existing path for validation.
+    cli = tmp_path / 'synthetic-cli.exe'
+    cli.write_bytes(b'synthetic non-executable fixture')
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir()}
+    with mock.patch.object(usage, 'CLI', cli), mock.patch.object(
+            usage.subprocess, 'Popen', side_effect=OSError('test')) as spawn:
+        usage.sample('plus_executor', {}, tmp_path)
+    spawn.assert_called_once()
+    assert spawn.call_args.kwargs['env'] == {}
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir()} == before
     argv=spawn.call_args.args[0]
     assert argv[1]=='-c' and argv[2].startswith('projects.') and '.trust_level="trusted"' in argv[2]

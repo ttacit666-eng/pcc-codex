@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from .paths import BASE,plain,inside,save,load
 
@@ -21,9 +22,13 @@ class Controller:
             CREATE TABLE IF NOT EXISTS tasks(id TEXT PRIMARY KEY,run_id TEXT,project TEXT,version INTEGER,subject TEXT,idem TEXT UNIQUE,status TEXT,body TEXT,created TEXT,updated TEXT,pid INTEGER,cancel INTEGER DEFAULT 0);
             CREATE TABLE IF NOT EXISTS audit(seq INTEGER PRIMARY KEY AUTOINCREMENT,time TEXT,task TEXT,event TEXT,body TEXT);
             ''')
+    @contextmanager
     def db(self):
         c=sqlite3.connect(self.dbpath,timeout=15);c.row_factory=sqlite3.Row
-        c.execute('PRAGMA journal_mode=WAL');return c
+        try:
+            c.execute('PRAGMA journal_mode=WAL')
+            with c:yield c
+        finally:c.close()
     def audit(self,task,event,body):
         with self.db() as c:c.execute('INSERT INTO audit(time,task,event,body) VALUES(?,?,?,?)',(now(),task,event,json.dumps(body)))
     def grant(self,g):
@@ -70,6 +75,42 @@ class Controller:
             c.execute('INSERT INTO tasks(id,run_id,project,version,subject,idem,status,body,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?)',(task,run,project,version,subject,fingerprint,'QUEUED',json.dumps(body),now(),now()))
         self.audit(task,'submitted',{'goal_sha256':hashlib.sha256(goal.encode()).hexdigest(),'grant_version':version})
         return self.status(subject,task)
+    def retry_prestart(self,task,reason):
+        """Local-owner explicit recovery only; preserve the original task and receipts."""
+        if not reason.strip():raise ValueError('explicit recovery reason required')
+        if (self.root/'disabled.flag').exists():raise PermissionError('dispatch paused')
+        with self.db() as c:
+            c.execute('BEGIN IMMEDIATE')
+            old=c.execute('SELECT * FROM tasks WHERE id=?',(task,)).fetchone()
+            if old is None:raise ValueError('unknown task')
+            self.authorized(old['subject'],old['project'],old['version'])
+            idem='manual-prestart-retry:'+task
+            existing=c.execute('SELECT id FROM tasks WHERE idem=?',(idem,)).fetchone()
+            if existing:return {'id':existing['id'],'already_requested':True}
+            if old['status']!='BLOCKED' or old['pid'] is not None or old['cancel']:
+                raise PermissionError('only untouched prestart BLOCKED tasks qualify')
+            run=self.root/'runs'/old['run_id']
+            failure=load(run/'failure.json');result=load(run/'result.json')
+            if failure.get('error_type')!='FileNotFoundError' or failure.get('stage')!='pre_execution_or_capture':
+                raise PermissionError('failure is not a verified missing-runtime prestart failure')
+            if result.get('actions') or result.get('artifacts') or (run/'actions.json').exists():
+                raise PermissionError('prior effects prevent recovery')
+            allowed={'binding.json','failure.json','inputs.json','receipt.md','result.json','samples-after.json','usage.json'}
+            launch=run/'process-launch.json'
+            if launch.exists():
+                proof=load(launch)
+                if proof.get('state')!='not_started' or proof.get('pid') is not None or proof.get('error_type')!='FileNotFoundError':
+                    raise PermissionError('launch intent or spawned process needs manual review')
+                allowed.add('process-launch.json')
+            if any(p.name not in allowed for p in run.iterdir()):raise PermissionError('execution evidence needs manual review')
+            if c.execute("SELECT 1 FROM tasks WHERE status NOT IN ('LOCAL_CHECK','FAILED','BLOCKED','CANCELLED')").fetchone():
+                raise RuntimeError('executor occupied')
+            new='pcc-'+dt.datetime.now().strftime('%Y%m%d')+'-'+uuid.uuid4().hex[:12]
+            c.execute('INSERT INTO tasks(id,run_id,project,version,subject,idem,status,body,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?)',
+                      (new,uuid.uuid4().hex,old['project'],old['version'],old['subject'],idem,'QUEUED',old['body'],now(),now()))
+            c.execute('INSERT INTO audit(time,task,event,body) VALUES(?,?,?,?)',
+                      (now(),new,'manual_prestart_retry',json.dumps({'original_task':task,'reason':reason})))
+        return {'id':new,'original_task':task,'status':'QUEUED'}
     def row(self,subject,task):
         with self.db() as c:r=c.execute('SELECT * FROM tasks WHERE id=? AND subject=?',(task,subject)).fetchone()
         if not r:raise PermissionError('task not authorized')
@@ -79,7 +120,7 @@ class Controller:
     def status(self,subject,task):
         r=self.row(subject,task)
         out={k:r[k] for k in ('id','run_id','project','version','status','created','updated','pid','cancel')}
-        out['process_observation']='not_started' if not r['pid'] else 'unknown'
+        out['process_observation']='not_started' if not r['pid'] and r['status'] in ('QUEUED','BLOCKED','CANCELLED') else 'unknown'
         if r['pid'] and os.name=='nt':
             import ctypes
             api=ctypes.WinDLL('kernel32',use_last_error=True)
@@ -107,8 +148,12 @@ class Controller:
         with self.db() as c:cancel=c.execute('SELECT cancel FROM tasks WHERE id=?',(r['id'],)).fetchone()[0]
         if cancel:raise InterruptedError('cancel requested')
     def cancel(self,subject,task):
-        r=self.row(subject,task)
+        self.row(subject,task) # Authorize before attempting a state transition.
         with self.db() as c:
+            # Serialize with claim: an earlier QUEUED observation must never
+            # turn a now-running task terminal and release its account slot.
+            c.execute('BEGIN IMMEDIATE')
+            r=c.execute('SELECT status FROM tasks WHERE id=? AND subject=?',(task,subject)).fetchone()
             if r['status']=='QUEUED':c.execute("UPDATE tasks SET status='CANCELLED',cancel=1,updated=? WHERE id=?",(now(),task))
             elif r['status'] not in TERMINAL:c.execute('UPDATE tasks SET cancel=1,updated=? WHERE id=?',(now(),task))
         return {**self.status(subject,task),'note':'request only; running process and prior side effects are not undone'}
@@ -118,7 +163,21 @@ class Controller:
         data=load(d/'result.json') if (d/'result.json').exists() else {'status':r['status'],'artifacts':[]}
         if (d/'actions.json').exists():data['actions']=load(d/'actions.json')
         items=data.get('artifacts',[]);data={**data,'artifacts':items[offset:offset+limit],'offset':offset,'total':len(items),'truncated':offset+limit<len(items)}
+        # A reviewer compares the model's reported input hash with the
+        # controller's frozen manifest, without arbitrary input-file access.
+        data['inputs']=None
+        if (d/'inputs.json').exists():
+            data['inputs']=[{key:item.get(key) for key in ('path','sha256','bytes')} for item in load(d/'inputs.json')]
+        data['input_hash_scope']='controller-frozen task input bytes at freeze time; not executor self-report'
+        data['execution_observation']=None
+        if (d/'execution-summary.json').exists():
+            observed=load(d/'execution-summary.json')
+            counts={key:observed.get(key) if type(observed.get(key)) is int and observed[key]>=0 else None
+                    for key in ('command_items_started','command_items_completed','agent_messages_completed')}
+            data['execution_observation']={**counts,'error_count':len(observed['errors']) if isinstance(observed.get('errors'),list) else None,
+                'scope':'CLI event counts only; command item start is not independent OS process creation proof'}
         if (d/'usage.json').exists():data['usage']=load(d/'usage.json')
+        if (d/'install-recovery/result.json').exists():data['install_recovery']=load(d/'install-recovery/result.json')
         data['independent_review']='REVIEW_REQUIRED'
         return data
     def artifact(self,subject,task,path,offset=0,limit=12000):

@@ -95,7 +95,7 @@ def capture_exec(argv, prompt, env, cwd, sink, on_start=None):
 
 def task_paths(root):
     root=u.plain_path(root)
-    protected=[u.ROOT,u.PLUS_HOME,Path.home()/".codex",Path.home()]
+    protected=[u.ROOT,u.PLUS_HOME,Path(u.settings()['controller_home']),Path.home()]
     for p in protected:
         p=p.resolve()
         if root==p or root in p.parents:
@@ -121,7 +121,7 @@ def prompt_path_for(taskroot,path):
 def argv_for(root):
     def path(p):return str(p).replace("\\","/")
     rules={":root":"deny",":minimal":"read",path(root/"input"):"read",path(root/"work"):"write",
-           path(root/"result"):"write",path(u.ROOT):"deny",path(Path.home()/".codex"):"deny",
+           path(root/"result"):"write",path(u.ROOT):"deny",path(Path(u.settings()['controller_home'])):"deny",
            path(u.PLUS_HOME/"auth.json"):"deny",path(u.PLUS_HOME/".sandbox-secrets"):"deny",
            path(Path(sys.executable).parent):"read",
            str(Path(__import__("shutil").which("pwsh") or __import__("shutil").which("powershell") or sys.executable).parent):"read"}
@@ -152,7 +152,7 @@ def run(meta, cwd, argv, prompt, root=u.ROOT, sampler=u.sample, executor=capture
         scope_valid=False
         capture["flags"].append("scope_preflight_failed_no_dispatch")
     env=u.plus_env()
-    for role,e in (("plus_executor",env),("pro_controller",os.environ.copy())):
+    for role,e in (("plus_executor",env),("pro_controller",u.controller_env())):
         before[role]=u.safe_sample(role,e,cwd,sampler)
     u.atomic_json(directory/"samples-before.json",before)
     a=before["plus_executor"].get("account") or {}
@@ -196,7 +196,7 @@ def run(meta, cwd, argv, prompt, root=u.ROOT, sampler=u.sample, executor=capture
         if scope_valid:capture["flags"].append("plus_identity_not_verified_no_dispatch")
         if collision:
             capture["flags"].append("account_identity_collision")
-    for role,e in (("plus_executor",env),("pro_controller",os.environ.copy())):
+    for role,e in (("plus_executor",env),("pro_controller",u.controller_env())):
         after[role]=u.safe_sample(role,e,cwd,sampler)
     u.atomic_json(directory/"samples-after.json",after)
     meta.update(task_status=status,finished_at=u.now(),process_id=capture.get("pid"),
@@ -283,7 +283,7 @@ def main():
     elif args.command=="sample":
         out={"kind":"native_read_only_smoke","time":u.now(),"cli_version":u.cli_version(),
              "model_dispatches":0,"samples":{}}
-        for role,env in (("plus_executor",u.plus_env()),("pro_controller",os.environ.copy())):
+        for role,env in (("plus_executor",u.plus_env()),("pro_controller",u.controller_env())):
             out["samples"][role]=u.safe_sample(role,env,u.ROOT)
         dest=u.ROOT/"review"/("native-smoke-"+u.now().replace(":","").replace("+","_")+".json")
         u.atomic_json(dest,out)

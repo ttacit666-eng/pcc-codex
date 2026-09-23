@@ -14,8 +14,14 @@ def main():
     s.add_parser('capabilities').add_argument('subject')
     s.add_parser('pause')
     s.add_parser('resume')
+    a=s.add_parser('retry-prestart');a.add_argument('task');a.add_argument('--reason',required=True)
+    a=s.add_parser('recover-install');a.add_argument('task');a.add_argument('--reason',required=True)
     args=p.parse_args();c=Controller()
     if args.cmd=='grant':result=c.grant(load(args.file))
+    elif args.cmd=='retry-prestart':result=c.retry_prestart(args.task,args.reason)
+    elif args.cmd=='recover-install':
+        from .install_recovery import recover
+        result=recover(c,args.task,args.reason)
     elif args.cmd=='revoke':c.revoke(args.project);result={'revoked':args.project,'in_flight':'cancellation/revocation checked by running executor; not all effects undone'}
     elif args.cmd=='status':result=c.status(args.subject,args.task)
     elif args.cmd=='capabilities':result=c.capabilities(args.subject)
