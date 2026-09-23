@@ -98,3 +98,33 @@ def test_dsh_command_fixed_flags_and_environment(configured,tmp_path,monkeypatch
 def test_npmrc_rejected_without_read(configured):
     c,g,v,t,_=configured;(Path(g['root'])/'profiles/web/.npmrc').write_text('synthetic')
     with pytest.raises(PermissionError,match='npmrc'):validate_grant(g,c.root)
+
+def test_pnpm_hardlink_metadata_read_only(configured):
+    import os
+    from pcc.package_install import verify_installed
+    c,g,v,t,manager=configured
+    directory=Path(g['root'])/'profiles/web'
+    (directory/'package.json').write_text(json.dumps({'dependencies':{'example-package':'1.2.3'}}))
+    metadata=directory/'node_modules/example-package/package.json';metadata.parent.mkdir(parents=True)
+    store=directory/'store.json';store.write_text(json.dumps({'name':'example-package','version':'1.2.3'}))
+    os.link(store,metadata)
+    verify_installed(directory,t['packages'])
+    with pytest.raises(ValueError,match='hard-linked'):load(metadata)
+    with pytest.raises(ValueError):verify_installed(directory,[{'name':'../escape','version':'1.2.3'}])
+
+def test_explicit_hardlink_recovery(configured,monkeypatch):
+    import pcc.package_install as module
+    from pcc.install_recovery import recover
+    c,g,v,t,manager=configured
+    original=module.verify_installed
+    def legacy(*args):raise ValueError('hard-linked file rejected')
+    monkeypatch.setattr(module,'verify_installed',legacy)
+    r=c.submit('owner','synthetic',v,'recover',{**plan(),'package_installs':['example']})
+    assert c.execute(r['id'],Fake())['status']=='FAILED'
+    monkeypatch.setattr(module,'verify_installed',original)
+    result=recover(c,r['id'],'explicit owner authorization')
+    assert result['status']=='VERIFIED_INSTALLED'
+    assert result['actions'][0]['reinstalled'] is False
+    assert c.status('owner',r['id'])['status']=='FAILED'
+    assert c.result('owner',r['id'])['install_recovery']['status']=='VERIFIED_INSTALLED'
+    with pytest.raises(RuntimeError,match='already attempted'):recover(c,r['id'],'again')
