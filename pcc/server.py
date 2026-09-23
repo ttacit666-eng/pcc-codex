@@ -9,6 +9,7 @@ import threading
 import time
 from urllib.parse import urlsplit
 import jwt
+import uvicorn
 from pydantic import ValidationError
 from mcp.server.fastmcp import FastMCP
 from mcp.server.auth.provider import AccessToken,TokenVerifier
@@ -18,6 +19,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from .controller import Controller
 from .paths import BASE,load,plain
+from .runtime import preflight_runtime
 
 class IngressDiagnosticMiddleware:
     """Log bounded request metadata outside authentication, never header values."""
@@ -49,6 +51,18 @@ class DiagnosticFastMCP(FastMCP):
         app=super().streamable_http_app()
         app.add_middleware(IngressDiagnosticMiddleware)
         return app
+
+class _WorkerReadyServer(uvicorn.Server):
+    """Dispatch only after lifespan and actual socket binding both succeed."""
+    def __init__(self,config,on_ready):
+        super().__init__(config)
+        self.on_ready=on_ready
+
+    async def startup(self,sockets=None):
+        await super().startup(sockets=sockets)
+        # Uvicorn sets started only after create_server has bound its sockets.
+        if self.started and not self.should_exit:
+            self.on_ready()
 
 class Verifier(TokenVerifier):
     @staticmethod
@@ -165,16 +179,22 @@ def build(controller,config,verifier=None):
         """Request cancellation; does not undo effects or prove child processes have stopped."""
         return controller.cancel(subject(),task_id)
     @m.resource('pcc://skill')
-    def skill()->str:return (BASE/'plugins/pcc/skills/pcc/SKILL.md').read_text(encoding='utf-8')
+    def skill()->str:
+        for rel in ('plugins/pcc/skills/pcc/SKILL.md','plugin/skills/pcc/SKILL.md'):
+            path=BASE/rel
+            if path.is_file():return path.read_text(encoding='utf-8')
+        raise FileNotFoundError('PCC_SKILL_MISSING')
     return m
 
 def serve(config_path):
     cfg=load(config_path)
     if cfg.get('deployment_enabled') is not True:raise PermissionError('deployment disabled; obtain consolidated approval first')
+    # Local compatibility checks never sample accounts or dispatch a model.
+    preflight_runtime()
     controller=Controller()
+    application=build(controller,cfg)
     # A persistent lock excludes multiple worker services. Never auto-break a stale owner lock.
     lock=controller.root/'service.lock';f=lock.open('x');f.write(str(__import__('os').getpid()));f.close()
-    controller.reconcile()
     stop=threading.Event()
     def worker():
         while not stop.wait(.5):
@@ -183,9 +203,15 @@ def serve(config_path):
             if r:
                 try:controller.execute(r['id'])
                 except Exception:controller.update(r['id'],'RECOVERY_REQUIRED')
-    t=threading.Thread(target=worker,daemon=True);t.start()
-    try:build(controller,cfg).run(transport='streamable-http')
+    t=threading.Thread(target=worker,daemon=True)
+    try:
+        controller.reconcile()
+        http_config=uvicorn.Config(application.streamable_http_app(),
+            host=application.settings.host,port=application.settings.port,
+            log_level=application.settings.log_level.lower())
+        _WorkerReadyServer(http_config,t.start).run()
     finally:
-        stop.set();t.join(timeout=3)
+        stop.set()
+        if t.ident is not None:t.join(timeout=3)
         # Retain owner lock if executor is still in flight.
-        if not t.is_alive():lock.unlink()
+        if not t.is_alive() and lock.read_text()==str(__import__('os').getpid()):lock.unlink()
