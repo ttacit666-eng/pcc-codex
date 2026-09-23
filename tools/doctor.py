@@ -30,7 +30,9 @@ def main():
         out.update(status='BLOCKED', error_code=getattr(error, 'code', type(error).__name__),
                    message=str(error) if isinstance(error, runtime.RuntimePathError) else type(error).__name__,
                    candidates=runtime.cli_candidates(), fallback_attempted=False)
-    print(json.dumps(out, ensure_ascii=False, indent=2))
+    # The diagnostic must survive redirected Windows stdout (for example cp1252).
+    # JSON escapes preserve the exact Unicode path without a global encoding change.
+    print(json.dumps(out, ensure_ascii=True, indent=2))
     return 0 if out['status'] == 'PASS' else 1
 
 if __name__ == '__main__':
