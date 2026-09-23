@@ -9,15 +9,20 @@ import queue
 import re
 import stat
 import subprocess
+import sys
 import threading
 import time
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
-from pcc.runtime import settings, controller_env
+# Direct script entrypoints must resolve PCC independently of the caller's cwd.
+PROJECT_ROOT = ROOT.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+from pcc.runtime import settings, controller_env, plus_environment, validate_cli
 _runtime = settings()
-CLI = Path(_runtime["cli"])
-PLUS_HOME = Path(_runtime["plus_home"])
+CLI = Path(_runtime['cli'])
+PLUS_HOME = Path(_runtime['plus_home'])
 CORE = ("input_tokens", "cached_input_tokens", "output_tokens")
 ROLES = ("plus_executor", "pro_controller", "cwc_reviewer")
 RPC_ALLOWED = {"initialize", "account/read", "account/rateLimits/read"}
@@ -56,20 +61,13 @@ def atomic_json(path, data):
     os.replace(temp, path)
 
 def plus_env():
-    from pcc.runtime import validate_separation
-    validate_separation(PLUS_HOME)
-    e = os.environ.copy()
-    for key in list(e):
-        if (key.upper().startswith(("CODEX_", "OPENAI_", "CHATGPT_", "C2C_")) and key != "CODEX_CA_CERTIFICATE") or key in ("RUST_LOG", "RUST_LOG_STYLE"):
-            e.pop(key, None)
-    e["CODEX_HOME"] = str(PLUS_HOME)
-    return e
+    return plus_environment(PLUS_HOME)
 
 def cli_version():
     try:
-        value = subprocess.check_output([str(CLI), "--version"], text=True, encoding="utf-8", stderr=subprocess.DEVNULL, timeout=15).strip()
+        value = subprocess.check_output([validate_cli(CLI), "--version"], text=True, encoding="utf-8", stderr=subprocess.DEVNULL, timeout=15).strip()
         return value if re.fullmatch(r"codex-cli [0-9A-Za-z.+-]+", value) else None
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, ValueError, subprocess.SubprocessError):
         return None
 
 def numeric_tree(value):
@@ -113,7 +111,7 @@ def sample(role, env, cwd, timeout=30):
     proc = None
     try:
         trust='projects.'+json.dumps(os.path.normcase(os.path.abspath(cwd)))+'.trust_level="trusted"'
-        proc = subprocess.Popen([str(CLI),"-c",trust,"app-server","--stdio"], stdin=subprocess.PIPE,
+        proc = subprocess.Popen([validate_cli(CLI),"-c",trust,"app-server","--stdio"], stdin=subprocess.PIPE,
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                 text=True, encoding="utf-8", cwd=cwd, env=env)
         messages = queue.Queue()
