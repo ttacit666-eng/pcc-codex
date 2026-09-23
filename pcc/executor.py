@@ -11,6 +11,7 @@ import time
 from .paths import BASE,inside,plain,digest,save,load
 from .controller import now
 from .broker import Broker,validate_plan
+from .runtime import controller_env
 
 spec=importlib.util.spec_from_file_location('pcc_native_usage',BASE/'vendor/tools/usage_receipt.py')
 usage=importlib.util.module_from_spec(spec);spec.loader.exec_module(usage)
@@ -18,7 +19,7 @@ usage=importlib.util.module_from_spec(spec);spec.loader.exec_module(usage)
 def arguments(job,control,python):
     def path(p):return str(p).replace('\\','/')
     rules={':root':'deny',':minimal':'read',path(job/'input'):'read',path(job/'work'):'write',path(job/'result'):'write',
-           path(control):'deny',path(Path.home()/'.codex'):'deny',path(usage.PLUS_HOME/'auth.json'):'deny',
+           path(control):'deny',path(Path(usage.settings()['controller_home'])):'deny',path(usage.PLUS_HOME/'auth.json'):'deny',
            path(usage.PLUS_HOME/'.sandbox-secrets'):'deny',path(Path(python).parent.parent):'read',
            path(Path(sys.base_prefix)):'read',
            str(Path(__import__("shutil").which("pwsh") or __import__("shutil").which("powershell") or sys.executable).parent):'read'}
@@ -39,7 +40,7 @@ class LiveExecutor:
         return probe(job,run,python,arguments(job,c.root,python),usage.plus_env())
     def sample(self,cwd):
         return {role:usage.safe_sample(role,env,cwd) for role,env in
-                [('plus_executor',usage.plus_env()),('pro_controller',usage.controller_env())]}
+                [('plus_executor',usage.plus_env()),('pro_controller',controller_env())]}
     def version(self):return usage.cli_version()
     def make_prompt(self,job,goal,plan,python,grant):
         return ('You are the independent Plus executor for a synthetic or authorized PCC task. Read only input; write only work/result. '
@@ -57,9 +58,18 @@ class LiveExecutor:
         diagnostics=ExecutionEvidence(run)
         with (run/'usage-events.jsonl').open('x',encoding='utf-8') as sink:
             c.checkpoint(r)
-            proc=subprocess.Popen(argv,cwd=job/'work',env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
-                                  text=True,encoding='utf-8',errors='replace')
-            c.update(r['id'],'RUNNING',proc.pid);save(run/'process.json',{'pid':proc.pid,'started':now(),'cli_start_count':1})
+            # Persist uncertainty BEFORE spawn. A crash or failed DB update after
+            # Popen must never turn an already-started CLI into a prestart block.
+            save(run/'process-launch.json',{'state':'intent','sample_time':now()})
+            try:
+                proc=subprocess.Popen(argv,cwd=job/'work',env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,
+                                      text=True,encoding='utf-8',errors='replace')
+            except Exception as error:
+                save(run/'process-launch.json',{'state':'not_started','error_type':type(error).__name__,'sample_time':now()})
+                raise
+            save(run/'process-launch.json',{'state':'spawned','pid':proc.pid,'sample_time':now()})
+            save(run/'process.json',{'pid':proc.pid,'started':now(),'cli_start_count':1})
+            c.update(r['id'],'RUNNING',proc.pid)
             def readout():
                 for line in proc.stdout:lines.put(line)
                 lines.put(None)
@@ -117,6 +127,22 @@ def receipt(c,r,run,before,after,events,status,version,flags,cap):
         save(c.root/'usage-index.json',{'items':items})
     return out
 
+def recover_captured_usage(run):
+    """Retain only the already-filtered journal after an interrupted capture."""
+    events=[];flags=['event_log_loss_possible']
+    path=run/'usage-events.jsonl'
+    if not path.exists():return events,flags
+    try:
+        with path.open(encoding='utf-8') as stream:
+            for line in stream:
+                try:
+                    item=json.loads(line)
+                    if not isinstance(item,dict) or not isinstance(item.get('type'),str):raise ValueError('invalid filtered event')
+                    events.append(item)
+                except (ValueError,TypeError):flags.append('incomplete_event_tail')
+    except (OSError,UnicodeError):flags.append('event_log_read_failed')
+    return events,list(dict.fromkeys(flags))
+
 def execute(c,task,executor=None):
     r=c.claim(task)
     e=executor or LiveExecutor()
@@ -148,14 +174,35 @@ def execute(c,task,executor=None):
             if set(plan['expected_outputs'])-set(x['path'] for x in artifacts):raise ValueError('expected output missing')
             broker.apply(plan);state='LOCAL_CHECK'
     except Exception as ex:
-        with c.db() as db: observed_pid=db.execute('SELECT pid FROM tasks WHERE id=?',(task,)).fetchone()[0]
         flags.append(type(ex).__name__)
+        launch_uncertain=False
+        observed_pid=None
+        try:
+            with c.db() as db: observed_pid=db.execute('SELECT pid FROM tasks WHERE id=?',(task,)).fetchone()[0]
+        except Exception:
+            launch_uncertain=True;flags.append('process_registry_unavailable')
+        if (run/'process-launch.json').exists():
+            try:
+                launch=load(run/'process-launch.json')
+                if not isinstance(launch,dict):raise ValueError('invalid launch record')
+                launch_uncertain=launch_uncertain or launch.get('state')!='not_started'
+                if launch.get('state')=='spawned' and type(launch.get('pid')) is int and launch['pid']>0:
+                    observed_pid=observed_pid or launch['pid']
+            except (OSError,ValueError,TypeError):
+                launch_uncertain=True;flags.append('launch_evidence_unreadable')
+        if not cap and (run/'usage-events.jsonl').exists():
+            # run() can fail after emitting real usage but before returning cap.
+            # Read its durable filtered journal once, never add it to a second
+            # copy or treat its terminal event as proof all processes stopped.
+            events,recovery_flags=recover_captured_usage(run)
+            flags.extend(recovery_flags);flags.append('capture_error_'+type(ex).__name__)
+            cap['pid']=observed_pid
         # A terminal guest response has no host Windows PID. Preserve failure rather
         # than misclassifying missing artifacts as a pre-execution block.
         from .package_install import InstallUncertain
-        state='FAILED' if cap.get('status') in ('completed','failed') else ('RECOVERY_REQUIRED' if observed_pid else 'BLOCKED')
+        state='FAILED' if cap.get('status') in ('completed','failed') else ('RECOVERY_REQUIRED' if observed_pid or launch_uncertain else 'BLOCKED')
         if isinstance(ex,InstallUncertain):state='RECOVERY_REQUIRED'
-        save(run/'failure.json',{'error_type':type(ex).__name__,'stage':'post_execution' if cap else 'pre_execution_or_capture','message':str(ex)[:300]})
+        save(run/'failure.json',{'error_type':type(ex).__name__,'stage':'post_execution' if cap.get('status') else 'pre_execution_or_capture','message':str(ex)[:300]})
         # Any uncertainty after spawn remains occupied, never automatically repeated.
     finally:
         cap.setdefault('source_kind',getattr(e,'source_kind','live'))
@@ -165,5 +212,5 @@ def execute(c,task,executor=None):
         save(run/'result.json',{'task_id':task,'run_id':r['run_id'],'status':state,'execution_mode':getattr(e,'execution_mode','injected_test_executor'),'local_check':state=='LOCAL_CHECK',
                               'artifacts':artifacts,'actions':broker.actions if broker else [],'flags':flags,'independent_review':'REVIEW_REQUIRED'})
         receipt(c,r,run,before,after,events,'completed' if state=='LOCAL_CHECK' else state.lower(),version,flags,cap)
-        c.update(task,state)
+        c.update(task,state,cap.get('pid'))
     return load(run/'result.json')
